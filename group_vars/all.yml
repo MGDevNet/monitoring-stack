@@ -1,0 +1,39 @@
+---
+# =============================================================================
+#  group_vars/all.yml — Shared settings for every host
+#
+#  NO IP ADDRESSES HERE. All IPs come from inventory/hosts.yml.
+# =============================================================================
+
+# ── Timezone ──────────────────────────────────────────────────────────────────
+system_timezone: "UTC"    # e.g. America/New_York, Europe/London, Asia/Tokyo
+
+# ── Common packages installed on every host ───────────────────────────────────
+common_packages:
+  - curl
+  - wget
+  - gnupg2
+  - gnupg
+  - ca-certificates
+  - apt-transport-https
+  - software-properties-common
+  - lsb-release
+  - unzip
+  - tar
+  - gzip
+  - acl
+  - htop
+  - net-tools
+  - dnsutils
+  - sudo
+  - rsync
+  - cron
+  - logrotate
+  - ufw
+
+# ── Node Exporter ─────────────────────────────────────────────────────────────
+node_exporter_version:     "1.10.2"
+node_exporter_port:        9100
+node_exporter_user:        node_exporter
+node_exporter_group:       node_exporter
+node_exporter_install_dir: /opt/node_exporter

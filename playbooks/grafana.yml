@@ -1,0 +1,32 @@
+---
+- name: "Bootstrap"
+  hosts: grafana
+  become: true
+  gather_facts: false
+  tags: [bootstrap, always]
+  roles:
+    - role: bootstrap
+
+- name: "Common baseline"
+  hosts: grafana
+  become: true
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+
+- name: "Node Exporter"
+  hosts: grafana
+  become: true
+  gather_facts: true
+  tags: [node_exporter]
+  roles:
+    - role: node_exporter
+
+- name: "Grafana"
+  hosts: grafana
+  become: true
+  gather_facts: true
+  tags: [grafana]
+  roles:
+    - role: grafana

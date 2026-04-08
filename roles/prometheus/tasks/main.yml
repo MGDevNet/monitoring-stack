@@ -1,0 +1,140 @@
+---
+# =============================================================================
+#  prometheus v{{ prometheus_version }}
+# =============================================================================
+
+- name: Install Prometheus prerequisites
+  ansible.builtin.apt:
+    name: [wget, tar, curl]
+    state: present
+    update_cache: yes
+
+- name: Create prometheus system group
+  ansible.builtin.group:
+    name: "{{ prometheus_group }}"
+    system: true
+
+- name: Create prometheus system user
+  ansible.builtin.user:
+    name: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create Prometheus directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+  loop:
+    - { path: "{{ prometheus_install_dir }}", owner: "{{ prometheus_user }}" }
+    - { path: "{{ prometheus_config_dir }}",  owner: root }
+    - { path: "{{ prometheus_config_dir }}/rules", owner: root }
+    - { path: "{{ prometheus_data_dir }}",    owner: "{{ prometheus_user }}" }
+
+- name: Check if Prometheus binary exists
+  ansible.builtin.stat:
+    path: "{{ prometheus_install_dir }}/prometheus"
+  register: prom_bin
+
+- name: Download Prometheus tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    mode: "0644"
+    timeout: 180
+  when: not prom_bin.stat.exists
+
+- name: Extract Prometheus tarball
+  ansible.builtin.unarchive:
+    src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    dest: /tmp/
+    remote_src: true
+  when: not prom_bin.stat.exists
+
+- name: Install prometheus binary
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/prometheus"
+    dest: "{{ prometheus_install_dir }}/prometheus"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+    remote_src: true
+  when: not prom_bin.stat.exists
+  notify: Restart prometheus
+
+- name: Install promtool binary
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/promtool"
+    dest: "{{ prometheus_install_dir }}/promtool"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+    remote_src: true
+  when: not prom_bin.stat.exists
+
+- name: Create /usr/local/bin symlinks
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+  loop:
+    - { src: "{{ prometheus_install_dir }}/prometheus", dest: /usr/local/bin/prometheus }
+    - { src: "{{ prometheus_install_dir }}/promtool",   dest: /usr/local/bin/promtool }
+
+- name: Clean up downloaded tarball
+  ansible.builtin.file:
+    path: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    state: absent
+
+- name: Deploy prometheus.yml configuration
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0644"
+    validate: "/usr/local/bin/promtool check config %s"
+  notify: Reload prometheus
+
+- name: Deploy alerting rules
+  ansible.builtin.template:
+    src: alert_rules.yml.j2
+    dest: "{{ prometheus_config_dir }}/rules/alert_rules.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0644"
+    validate: "/usr/local/bin/promtool check rules %s"
+  notify: Reload prometheus
+
+- name: Deploy Prometheus systemd service
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart prometheus
+
+- name: Enable and start Prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow Prometheus port in UFW
+  ansible.builtin.command: "ufw allow from {{ internal_network }} to any port {{ prometheus_port }} proto tcp"
+  changed_when: false
+
+- name: Verify Prometheus is healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ prometheus_port }}/-/healthy"
+    status_code: 200
+  retries: 10
+  delay: 6
+  register: prom_health
+  until: prom_health.status == 200

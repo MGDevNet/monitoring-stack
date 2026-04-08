@@ -1,0 +1,49 @@
+---
+# =============================================================================
+#  group_vars/zabbix.yml — MySQL + Zabbix Server + Frontend
+#
+#  NO IP ADDRESSES HERE. The Zabbix server host IP is read automatically
+#  from the inventory (hostvars['zabbix-vm'].ansible_host).
+# =============================================================================
+
+# ── Versions ──────────────────────────────────────────────────────────────────
+zabbix_version: "7.4"
+php_version:    "8.2"
+
+# ── MySQL ─────────────────────────────────────────────────────────────────────
+mysql_root_password: "PUTPASSWD_HERE"   # ← CHANGE IN PRODUCTION
+mysql_port:          3306
+
+zabbix_db_host:     localhost
+zabbix_db_port:     "{{ mysql_port }}"
+zabbix_db_name:     zabbix
+zabbix_db_user:     zabbix
+zabbix_db_password: "PUTPASSWD_HERE"    # ← CHANGE IN PRODUCTION
+
+# ── Zabbix Server ─────────────────────────────────────────────────────────────
+zabbix_server_hostname: "Zabbix Server"
+zabbix_server_port:     10051
+zabbix_config_dir:      /etc/zabbix
+zabbix_log_dir:         /var/log/zabbix
+zabbix_pid_dir:         /run/zabbix
+
+# Pulled from inventory — no hardcoded IP needed
+zabbix_server_host: "{{ hostvars[groups['zabbix'][0]]['ansible_host'] }}"
+
+# Cache tuning — adjust for your hardware
+zabbix_cache_size:               128M
+zabbix_history_cache_size:       64M
+zabbix_history_index_cache_size: 16M
+zabbix_trend_cache_size:         16M
+zabbix_value_cache_size:         64M
+
+# ── Zabbix Frontend ───────────────────────────────────────────────────────────
+zabbix_web_port: 8080
+zabbix_web_root: /usr/share/zabbix
+
+# ── Zabbix API (used by Grafana datasource) ───────────────────────────────────
+zabbix_api_user:     "Admin"
+zabbix_api_password: "PUTPASSWD_HERE"    # ← CHANGE AFTER FIRST LOGIN
+
+# ── Zabbix Agent (deployed to all monitored hosts) ────────────────────────────
+zabbix_agent_port: 10050

@@ -1,0 +1,40 @@
+---
+- name: "Bootstrap"
+  hosts: prometheus
+  become: true
+  gather_facts: false
+  tags: [bootstrap, always]
+  roles:
+    - role: bootstrap
+
+- name: "Common baseline"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+
+- name: "Node Exporter"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [node_exporter]
+  roles:
+    - role: node_exporter
+
+- name: "Prometheus"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [prometheus]
+  roles:
+    - role: prometheus
+
+- name: "Alertmanager"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [alertmanager]
+  roles:
+    - role: alertmanager

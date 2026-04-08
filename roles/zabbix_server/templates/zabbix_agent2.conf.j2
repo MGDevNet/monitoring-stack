@@ -1,0 +1,14 @@
+# Zabbix Agent2 Configuration — Zabbix Server VM
+# Managed by Ansible — do not edit manually
+
+PidFile={{ zabbix_pid_dir }}/zabbix_agent2.pid
+LogFile={{ zabbix_log_dir }}/zabbix_agent2.log
+LogFileSize=10
+
+Server=127.0.0.1
+ServerActive=127.0.0.1
+Hostname={{ zabbix_server_hostname }}
+
+Timeout=30
+ControlSocket=/tmp/agent.sock
+Include={{ zabbix_config_dir }}/zabbix_agent2.d/*.conf

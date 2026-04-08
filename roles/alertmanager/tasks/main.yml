@@ -1,0 +1,109 @@
+---
+- name: Create alertmanager system group
+  ansible.builtin.group:
+    name: "{{ alertmanager_group }}"
+    system: true
+
+- name: Create alertmanager system user
+  ansible.builtin.user:
+    name: "{{ alertmanager_user }}"
+    group: "{{ alertmanager_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create Alertmanager directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ alertmanager_user }}"
+    group: "{{ alertmanager_group }}"
+    mode: "0755"
+  loop:
+    - "{{ alertmanager_install_dir }}"
+    - "{{ alertmanager_config_dir }}"
+    - "{{ alertmanager_data_dir }}"
+
+- name: Check if Alertmanager binary exists
+  ansible.builtin.stat:
+    path: "{{ alertmanager_install_dir }}/alertmanager"
+  register: am_bin
+
+- name: Download Alertmanager tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/alertmanager-{{ alertmanager_version }}.tar.gz"
+    mode: "0644"
+    timeout: 120
+  when: not am_bin.stat.exists
+
+- name: Extract Alertmanager tarball
+  ansible.builtin.unarchive:
+    src: "/tmp/alertmanager-{{ alertmanager_version }}.tar.gz"
+    dest: /tmp/
+    remote_src: true
+  when: not am_bin.stat.exists
+
+- name: Install alertmanager and amtool binaries
+  ansible.builtin.copy:
+    src: "/tmp/alertmanager-{{ alertmanager_version }}.linux-amd64/{{ item }}"
+    dest: "{{ alertmanager_install_dir }}/{{ item }}"
+    owner: "{{ alertmanager_user }}"
+    group: "{{ alertmanager_group }}"
+    mode: "0755"
+    remote_src: true
+  loop: [alertmanager, amtool]
+  when: not am_bin.stat.exists
+  notify: Restart alertmanager
+
+- name: Create /usr/local/bin symlinks
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+  loop:
+    - { src: "{{ alertmanager_install_dir }}/alertmanager", dest: /usr/local/bin/alertmanager }
+    - { src: "{{ alertmanager_install_dir }}/amtool",       dest: /usr/local/bin/amtool }
+
+- name: Clean up tarball
+  ansible.builtin.file:
+    path: "/tmp/alertmanager-{{ alertmanager_version }}.tar.gz"
+    state: absent
+
+- name: Deploy Alertmanager configuration
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "{{ alertmanager_config_dir }}/alertmanager.yml"
+    owner: "{{ alertmanager_user }}"
+    group: "{{ alertmanager_group }}"
+    mode: "0640"
+  notify: Restart alertmanager
+
+- name: Deploy Alertmanager systemd service
+  ansible.builtin.template:
+    src: alertmanager.service.j2
+    dest: /etc/systemd/system/alertmanager.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart alertmanager
+
+- name: Enable and start Alertmanager
+  ansible.builtin.systemd:
+    name: alertmanager
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow Alertmanager port in UFW
+  ansible.builtin.command: "ufw allow from {{ internal_network }} to any port {{ alertmanager_port }} proto tcp"
+  changed_when: false
+
+- name: Verify Alertmanager is healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ alertmanager_port }}/-/healthy"
+    status_code: 200
+  retries: 10
+  delay: 5
+  register: am_health
+  until: am_health.status == 200

@@ -1,0 +1,48 @@
+---
+- name: "Bootstrap"
+  hosts: zabbix
+  become: true
+  gather_facts: false
+  tags: [bootstrap, always]
+  roles:
+    - role: bootstrap
+
+- name: "Common baseline"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+
+- name: "Node Exporter"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [node_exporter]
+  roles:
+    - role: node_exporter
+
+- name: "MySQL"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [mysql, database]
+  roles:
+    - role: mysql
+
+- name: "Zabbix Server"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [zabbix_server]
+  roles:
+    - role: zabbix_server
+
+- name: "Zabbix Frontend"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [zabbix_frontend]
+  roles:
+    - role: zabbix_frontend

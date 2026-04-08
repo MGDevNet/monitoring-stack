@@ -1,0 +1,31 @@
+<?php
+// Zabbix Frontend Configuration
+// Managed by Ansible — do not edit manually.
+// This file bypasses the web installation wizard entirely.
+
+// Database connection (MySQL)
+$DB['TYPE']           = 'MYSQL';
+$DB['SERVER']         = '{{ zabbix_db_host }}';
+$DB['PORT']           = '{{ zabbix_db_port }}';
+$DB['DATABASE']       = '{{ zabbix_db_name }}';
+$DB['USER']           = '{{ zabbix_db_user }}';
+$DB['PASSWORD']       = '{{ zabbix_db_password }}';
+$DB['SCHEMA']         = '';
+$DB['ENCRYPTION']     = false;
+$DB['KEY_FILE']       = '';
+$DB['CERT_FILE']      = '';
+$DB['CA_FILE']        = '';
+$DB['VERIFY_HOST']    = false;
+$DB['CIPHER_LIST']    = '';
+$DB['VAULT_URL']      = '';
+$DB['VAULT_DB_PATH']  = '';
+$DB['VAULT_TOKEN']    = '';
+$DB['DOUBLE_IEEE754'] = true;
+
+// Zabbix server connection
+$ZBX_SERVER      = '127.0.0.1';
+$ZBX_SERVER_PORT = '{{ zabbix_server_port }}';
+$ZBX_SERVER_NAME = '{{ zabbix_server_hostname }}';
+
+// Frontend settings
+$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;

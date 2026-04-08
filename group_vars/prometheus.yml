@@ -1,0 +1,37 @@
+---
+# =============================================================================
+#  group_vars/prometheus.yml — Prometheus + Alertmanager
+#
+#  NO IP ADDRESSES HERE. Scrape targets are built dynamically from
+#  the inventory so you never have to update this file when adding hosts.
+# =============================================================================
+
+# ── Versions ──────────────────────────────────────────────────────────────────
+prometheus_version:   "3.8.0"
+alertmanager_version: "0.27.0"
+
+# ── Prometheus ────────────────────────────────────────────────────────────────
+prometheus_user:              prometheus
+prometheus_group:             prometheus
+prometheus_port:              9090
+prometheus_install_dir:       /opt/prometheus
+prometheus_config_dir:        /etc/prometheus
+prometheus_data_dir:          /var/lib/prometheus
+prometheus_storage_retention: "30d"
+prometheus_storage_retention_size: "10GB"
+
+# ── Alertmanager ──────────────────────────────────────────────────────────────
+alertmanager_enabled:     true
+alertmanager_port:        9093
+alertmanager_user:        alertmanager
+alertmanager_group:       alertmanager
+alertmanager_install_dir: /opt/alertmanager
+alertmanager_config_dir:  /etc/alertmanager
+alertmanager_data_dir:    /var/lib/alertmanager
+
+# ── SMTP alert delivery (uncomment to enable) ─────────────────────────────────
+# alertmanager_smtp_from:          "alerts@yourdomain.com"
+# alertmanager_smtp_smarthost:     "smtp.yourdomain.com:587"
+# alertmanager_smtp_auth_username: "alerts@yourdomain.com"
+# alertmanager_smtp_auth_password: "your_smtp_password"
+# alertmanager_receiver_email:     "ops@yourdomain.com"

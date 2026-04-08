@@ -1,0 +1,105 @@
+---
+- name: Download Zabbix release package
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_{{ zabbix_version }}-2+ubuntu22.04_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: "0644"
+    timeout: 120
+
+- name: Install Zabbix release package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+
+- name: Update apt cache after adding Zabbix repo
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install Zabbix server (MySQL build), agent2 and plugins
+  ansible.builtin.apt:
+    name:
+      - zabbix-server-mysql
+      - zabbix-sql-scripts
+      - zabbix-agent2
+      - zabbix-agent2-plugin-*
+    state: present
+    update_cache: yes
+  notify: Restart zabbix-server
+
+- name: Create Zabbix directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: zabbix
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ zabbix_config_dir }}",            owner: root,   mode: "0755" }
+    - { path: "{{ zabbix_log_dir }}",               owner: zabbix, mode: "0755" }
+    - { path: "{{ zabbix_pid_dir }}",               owner: zabbix, mode: "0755" }
+    - { path: /usr/lib/zabbix/alertscripts,         owner: zabbix, mode: "0750" }
+    - { path: /usr/lib/zabbix/externalscripts,      owner: zabbix, mode: "0750" }
+
+- name: Check if Zabbix schema is already imported
+  ansible.builtin.shell: |
+    mysql -u {{ zabbix_db_user }} -p'{{ zabbix_db_password }}' \
+      {{ zabbix_db_name }} -e "SELECT COUNT(*) FROM hosts;" 2>&1
+  register: schema_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Import Zabbix initial schema into MySQL
+  ansible.builtin.shell: |
+    zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | \
+    mysql --default-character-set=utf8mb4 \
+          -u {{ zabbix_db_user }} -p'{{ zabbix_db_password }}' {{ zabbix_db_name }}
+  when: schema_check.rc != 0
+  no_log: true
+  notify: Restart zabbix-server
+
+- name: Deploy Zabbix server configuration
+  ansible.builtin.template:
+    src: zabbix_server.conf.j2
+    dest: "{{ zabbix_config_dir }}/zabbix_server.conf"
+    owner: root
+    group: zabbix
+    mode: "0640"
+  notify: Restart zabbix-server
+
+- name: Deploy Zabbix Agent2 configuration (on Zabbix VM itself)
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: "{{ zabbix_config_dir }}/zabbix_agent2.conf"
+    owner: root
+    group: zabbix
+    mode: "0640"
+  notify: Restart zabbix-agent2
+
+- name: Enable and start Zabbix server
+  ansible.builtin.systemd:
+    name: zabbix-server
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Enable and start Zabbix Agent2
+  ansible.builtin.systemd:
+    name: zabbix-agent2
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow Zabbix server port in UFW
+  ansible.builtin.command: "ufw allow {{ zabbix_server_port }}/tcp"
+  changed_when: false
+
+- name: Allow Zabbix agent port in UFW
+  ansible.builtin.command: "ufw allow from {{ internal_network }} to any port {{ zabbix_agent_port }} proto tcp"
+  changed_when: false
+
+- name: Verify Zabbix server is listening
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: "{{ zabbix_server_port }}"
+    timeout: 60

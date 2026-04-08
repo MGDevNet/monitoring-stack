@@ -1,0 +1,37 @@
+---
+# Grafana Datasource Provisioning
+# Managed by Ansible — do not edit manually
+# URLs are built automatically from inventory IPs
+
+apiVersion: 1
+
+deleteDatasources:
+{% for ds in grafana_datasources %}
+  - name: {{ ds.name }}
+    orgId: 1
+{% endfor %}
+
+datasources:
+{% for ds in grafana_datasources %}
+  - name:      {{ ds.name }}
+    type:      {{ ds.type }}
+    access:    {{ ds.access }}
+    orgId:     1
+    url:       {{ ds.url }}
+    isDefault: {{ ds.isDefault | default(false) | lower }}
+    editable:  false
+    version:   1
+{% if ds.jsonData is defined %}
+    jsonData:
+{% for key, value in ds.jsonData.items() %}
+      {{ key }}: {{ value | to_json }}
+{% endfor %}
+{% endif %}
+{% if ds.secureJsonData is defined %}
+    secureJsonData:
+{% for key, value in ds.secureJsonData.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+
+{% endfor %}

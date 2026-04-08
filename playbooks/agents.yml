@@ -1,0 +1,38 @@
+---
+# =============================================================================
+#  playbooks/agents.yml — Deploy agents to monitored hosts
+#  Use this when adding a new server to monitor.
+#  Usage: ansible-playbook playbooks/agents.yml --limit app-server-03
+# =============================================================================
+
+- name: "Bootstrap monitored hosts"
+  hosts: monitored
+  become: true
+  gather_facts: false
+  tags: [bootstrap, always]
+  roles:
+    - role: bootstrap
+
+- name: "Common baseline"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+
+- name: "Node Exporter"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [node_exporter, agents]
+  roles:
+    - role: node_exporter
+
+- name: "Zabbix Agent2"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [zabbix_agent, agents]
+  roles:
+    - role: zabbix_agent

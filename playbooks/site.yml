@@ -1,0 +1,85 @@
+---
+# =============================================================================
+#  playbooks/site.yml — Full monitoring stack deployment
+#  Usage: ansible-playbook playbooks/site.yml   |   make deploy
+# =============================================================================
+
+- name: "Bootstrap — install Python3 on every host"
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [bootstrap, always]
+  roles:
+    - role: bootstrap
+
+- name: "Common — OS baseline on all hosts"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+
+- name: "Node Exporter — deploy on all monitored hosts"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [node_exporter, agents]
+  roles:
+    - role: node_exporter
+
+- name: "Zabbix Agent2 — deploy on all monitored hosts"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [zabbix_agent, agents]
+  roles:
+    - role: zabbix_agent
+
+- name: "MySQL — install database on Zabbix VM"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [mysql, database, zabbix]
+  roles:
+    - role: mysql
+
+- name: "Zabbix Server — install and configure"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [zabbix_server, zabbix]
+  roles:
+    - role: zabbix_server
+
+- name: "Zabbix Frontend — PHP + Nginx + skip web wizard"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [zabbix_frontend, zabbix]
+  roles:
+    - role: zabbix_frontend
+
+- name: "Prometheus — install and configure"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [prometheus]
+  roles:
+    - role: prometheus
+
+- name: "Alertmanager — install and configure"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [alertmanager, prometheus]
+  roles:
+    - role: alertmanager
+
+- name: "Grafana — install, provision datasources and plugins"
+  hosts: grafana
+  become: true
+  gather_facts: true
+  tags: [grafana]
+  roles:
+    - role: grafana

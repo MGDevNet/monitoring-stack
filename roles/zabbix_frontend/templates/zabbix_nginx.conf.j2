@@ -1,0 +1,35 @@
+server {
+    listen      {{ zabbix_web_port }};
+    server_name _;
+
+    root  {{ zabbix_web_root }};
+    index index.php;
+
+    access_log /var/log/nginx/zabbix_access.log;
+    error_log  /var/log/nginx/zabbix_error.log;
+
+    client_max_body_size 32M;
+
+    location = /favicon.ico { log_not_found off; }
+    location / { try_files $uri $uri/ =404; }
+    location /assets { access_log off; expires 10d; }
+    location ~ /\. { deny all; return 404; }
+    location ~ /(api\/|conf[^\.]|include|locale) { deny all; return 404; }
+    location /vendor { deny all; return 404; }
+
+    location ~ [^/]\.php(/|$) {
+        fastcgi_pass   unix:/run/php/php{{ php_version }}-fpm-zabbix.sock;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include        fastcgi_params;
+        fastcgi_intercept_errors    on;
+        fastcgi_ignore_client_abort off;
+        fastcgi_connect_timeout     60;
+        fastcgi_send_timeout        180;
+        fastcgi_read_timeout        180;
+        fastcgi_buffer_size         128k;
+        fastcgi_buffers             4 256k;
+        fastcgi_busy_buffers_size   256k;
+    }
+}

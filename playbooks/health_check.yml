@@ -1,0 +1,182 @@
+---
+# =============================================================================
+#  playbooks/health_check.yml — Deep health checks across all services
+#  Usage: ansible-playbook playbooks/health_check.yml   |   make health
+# =============================================================================
+
+- name: "Health Check — Agents (all monitored hosts)"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Check Node Exporter systemd state
+      ansible.builtin.systemd:
+        name: node_exporter
+      register: ne_svc
+
+    - name: Check Node Exporter metrics endpoint
+      ansible.builtin.uri:
+        url: "http://localhost:{{ node_exporter_port }}/metrics"
+        method: GET
+        status_code: 200
+        timeout: 5
+      register: ne_http
+
+    - name: Check Zabbix Agent2 systemd state
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+      register: zbx_agent_svc
+      failed_when: false
+
+    - name: Agent status
+      ansible.builtin.debug:
+        msg: "[{{ inventory_hostname }}] node_exporter={{ ne_svc.status.ActiveState }}/HTTP={{ ne_http.status }} | zabbix_agent2={{ zbx_agent_svc.status.ActiveState | default('not installed') }}"
+
+- name: "Health Check — Prometheus"
+  hosts: prometheus
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check Prometheus systemd state
+      ansible.builtin.systemd:
+        name: prometheus
+      register: prom_svc
+
+    - name: Check Prometheus health endpoint
+      ansible.builtin.uri:
+        url: "http://localhost:{{ prometheus_port }}/-/healthy"
+        status_code: 200
+        timeout: 5
+      register: prom_health
+
+    - name: Get Prometheus targets
+      ansible.builtin.uri:
+        url: "http://localhost:{{ prometheus_port }}/api/v1/targets"
+        status_code: 200
+        timeout: 5
+      register: prom_targets
+
+    - name: Count targets up vs down
+      ansible.builtin.set_fact:
+        targets_up:   "{{ prom_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up')   | list | length }}"
+        targets_down: "{{ prom_targets.json.data.activeTargets | selectattr('health', 'equalto', 'down') | list | length }}"
+
+    - name: Check Alertmanager systemd state
+      ansible.builtin.systemd:
+        name: alertmanager
+      register: am_svc
+
+    - name: Check Alertmanager health endpoint
+      ansible.builtin.uri:
+        url: "http://localhost:{{ alertmanager_port }}/-/healthy"
+        status_code: 200
+        timeout: 5
+      register: am_health
+
+    - name: Prometheus status
+      ansible.builtin.debug:
+        msg: "[prometheus-vm] prometheus={{ prom_svc.status.ActiveState }}/HTTP={{ prom_health.status }} targets_up={{ targets_up }} targets_down={{ targets_down }} | alertmanager={{ am_svc.status.ActiveState }}/HTTP={{ am_health.status }}"
+
+    - name: Warn if targets are down
+      ansible.builtin.debug:
+        msg: "⚠  WARNING: {{ targets_down }} target(s) DOWN — check http://{{ ansible_host }}:{{ prometheus_port }}/targets"
+      when: targets_down | int > 0
+
+- name: "Health Check — Zabbix"
+  hosts: zabbix
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check MySQL systemd state
+      ansible.builtin.systemd:
+        name: mysql
+      register: mysql_svc
+
+    - name: Check MySQL connectivity
+      ansible.builtin.shell: |
+        mysql -u {{ zabbix_db_user }} -p'{{ zabbix_db_password }}' \
+          {{ zabbix_db_name }} -e "SELECT COUNT(*) FROM hosts;" 2>&1
+      register: mysql_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Check Zabbix server systemd state
+      ansible.builtin.systemd:
+        name: zabbix-server
+      register: zbx_svc
+
+    - name: Check Zabbix Agent2 systemd state
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+      register: zbx_agent_svc
+
+    - name: Check Zabbix frontend HTTP
+      ansible.builtin.uri:
+        url: "http://localhost:{{ zabbix_web_port }}/"
+        status_code: 200
+        timeout: 5
+      register: zbx_http
+
+    - name: Check Zabbix API version
+      ansible.builtin.uri:
+        url: "http://localhost:{{ zabbix_web_port }}/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body: { jsonrpc: "2.0", method: "apiinfo.version", params: [], id: 1 }
+        status_code: 200
+        timeout: 5
+      register: zbx_api
+
+    - name: Zabbix status
+      ansible.builtin.debug:
+        msg: "[zabbix-vm] mysql={{ mysql_svc.status.ActiveState }} | zabbix_server={{ zbx_svc.status.ActiveState }} | agent2={{ zbx_agent_svc.status.ActiveState }} | frontend_http={{ zbx_http.status }} | api_version={{ zbx_api.json.result }}"
+
+- name: "Health Check — Grafana"
+  hosts: grafana
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check Grafana systemd state
+      ansible.builtin.systemd:
+        name: grafana-server
+      register: grafana_svc
+
+    - name: Check Grafana health endpoint
+      ansible.builtin.uri:
+        url: "http://localhost:{{ grafana_port }}/api/health"
+        status_code: 200
+        timeout: 5
+      register: grafana_health
+
+    - name: Check datasources provisioned
+      ansible.builtin.uri:
+        url: "http://localhost:{{ grafana_port }}/api/datasources"
+        method: GET
+        user: "{{ grafana_admin_user }}"
+        password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+        timeout: 5
+      register: grafana_ds
+      no_log: true
+
+    - name: Grafana status
+      ansible.builtin.debug:
+        msg: "[grafana-vm] grafana={{ grafana_svc.status.ActiveState }}/HTTP={{ grafana_health.status }} | datasources={{ grafana_ds.json | length }} ({{ grafana_ds.json | map(attribute='name') | list | join(', ') }})"
+
+- name: "Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Print access URLs
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════"
+          - "  Monitoring Stack — Health Check COMPLETE"
+          - "══════════════════════════════════════════════════"
+          - "  Prometheus  : http://{{ hostvars[groups['prometheus'][0]]['ansible_host'] }}:9090"
+          - "  Alertmanager: http://{{ hostvars[groups['prometheus'][0]]['ansible_host'] }}:9093"
+          - "  Grafana     : http://{{ hostvars[groups['grafana'][0]]['ansible_host'] }}:3000"
+          - "  Zabbix      : http://{{ hostvars[groups['zabbix'][0]]['ansible_host'] }}:8080"
+          - "══════════════════════════════════════════════════"

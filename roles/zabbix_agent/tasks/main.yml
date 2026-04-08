@@ -1,0 +1,56 @@
+---
+- name: Download Zabbix release package
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_{{ zabbix_version }}-2+ubuntu22.04_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: "0644"
+    timeout: 120
+
+- name: Install Zabbix release package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+
+- name: Update apt cache after adding Zabbix repo
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install Zabbix Agent2 and plugins
+  ansible.builtin.apt:
+    name:
+      - zabbix-agent2
+      - zabbix-agent2-plugin-*
+    state: present
+    update_cache: yes
+
+- name: Create /etc/zabbix directory
+  ansible.builtin.file:
+    path: /etc/zabbix
+    state: directory
+    mode: "0755"
+
+- name: Deploy Zabbix Agent2 configuration
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
+    owner: root
+    group: zabbix
+    mode: "0640"
+  notify: Restart zabbix-agent2
+
+- name: Enable and start Zabbix Agent2
+  ansible.builtin.systemd:
+    name: zabbix-agent2
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow Zabbix agent port through UFW
+  ansible.builtin.command: "ufw allow from {{ zabbix_server_host }} to any port {{ zabbix_agent_port }} proto tcp"
+  changed_when: false
+
+- name: Verify Zabbix Agent2 is listening
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: "{{ zabbix_agent_port }}"
+    timeout: 30

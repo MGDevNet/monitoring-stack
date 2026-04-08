@@ -1,0 +1,149 @@
+---
+- name: Add PHP Ondrej PPA signing key
+  ansible.builtin.shell: |
+    curl -fsSL https://packages.sury.org/php/apt.gpg | \
+    gpg --dearmor -o /etc/apt/trusted.gpg.d/php-sury.gpg
+  args:
+    creates: /etc/apt/trusted.gpg.d/php-sury.gpg
+
+- name: Add PHP Ondrej PPA repository
+  ansible.builtin.apt_repository:
+    repo: "deb https://packages.sury.org/php/ {{ ansible_distribution_release }} main"
+    filename: php-sury
+    state: present
+    update_cache: yes
+
+- name: Install PHP {{ php_version }} and all Zabbix-required extensions
+  ansible.builtin.apt:
+    name:
+      - "php{{ php_version }}"
+      - "php{{ php_version }}-fpm"
+      - "php{{ php_version }}-mysql"
+      - "php{{ php_version }}-bcmath"
+      - "php{{ php_version }}-mbstring"
+      - "php{{ php_version }}-xml"
+      - "php{{ php_version }}-xmlreader"
+      - "php{{ php_version }}-xmlwriter"
+      - "php{{ php_version }}-gd"
+      - "php{{ php_version }}-ldap"
+      - "php{{ php_version }}-curl"
+      - "php{{ php_version }}-zip"
+      - "php{{ php_version }}-json"
+    state: present
+    update_cache: yes
+
+- name: Set PHP timezone
+  ansible.builtin.lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/php.ini"
+    regexp: '^;?date.timezone\s*='
+    line: "date.timezone = {{ system_timezone }}"
+  notify: Restart php-fpm
+
+- name: Tune PHP settings for Zabbix frontend
+  ansible.builtin.lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/php.ini"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^max_execution_time\s*=',  line: "max_execution_time = 300" }
+    - { regexp: '^memory_limit\s*=',        line: "memory_limit = 256M" }
+    - { regexp: '^post_max_size\s*=',       line: "post_max_size = 32M" }
+    - { regexp: '^upload_max_filesize\s*=', line: "upload_max_filesize = 2M" }
+    - { regexp: '^max_input_time\s*=',      line: "max_input_time = 300" }
+  notify: Restart php-fpm
+
+- name: Deploy PHP-FPM pool config for Zabbix
+  ansible.builtin.template:
+    src: zabbix.conf.php-fpm.j2
+    dest: "/etc/php/{{ php_version }}/fpm/pool.d/zabbix.conf"
+    mode: "0644"
+  notify: Restart php-fpm
+
+- name: Enable and start php-fpm
+  ansible.builtin.systemd:
+    name: "php{{ php_version }}-fpm"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: yes
+
+- name: Remove default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart nginx
+
+- name: Install Zabbix frontend package
+  ansible.builtin.apt:
+    name:
+      - zabbix-frontend-php
+      - zabbix-nginx-conf
+    state: present
+    update_cache: yes
+
+- name: Create Zabbix web config directory
+  ansible.builtin.file:
+    path: /etc/zabbix/web
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0750"
+
+- name: Deploy zabbix.conf.php (skips the web setup wizard entirely)
+  ansible.builtin.template:
+    src: zabbix.conf.php.j2
+    dest: /etc/zabbix/web/zabbix.conf.php
+    owner: www-data
+    group: www-data
+    mode: "0640"
+  notify: Restart php-fpm
+
+- name: Deploy Nginx virtual host for Zabbix
+  ansible.builtin.template:
+    src: zabbix_nginx.conf.j2
+    dest: /etc/nginx/sites-available/zabbix.conf
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Enable Zabbix Nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/zabbix.conf
+    dest: /etc/nginx/sites-enabled/zabbix.conf
+    state: link
+  notify: Restart nginx
+
+- name: Enable and start Nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Restart php-fpm to apply all config
+  ansible.builtin.systemd:
+    name: "php{{ php_version }}-fpm"
+    state: restarted
+
+- name: Restart Nginx to apply Zabbix vhost
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+
+- name: Wait for Zabbix web interface to respond
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ zabbix_web_port }}"
+    timeout: 60
+
+- name: Allow Zabbix web port in UFW
+  ansible.builtin.command: "ufw allow {{ zabbix_web_port }}/tcp"
+  changed_when: false
+
+- name: Allow HTTP in UFW
+  ansible.builtin.command: "ufw allow 80/tcp"
+  changed_when: false

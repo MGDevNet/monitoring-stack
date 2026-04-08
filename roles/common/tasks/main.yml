@@ -1,0 +1,96 @@
+---
+# =============================================================================
+#  common — OS baseline. /etc/hosts entries are built from inventory IPs.
+# =============================================================================
+
+- name: Set system hostname
+  ansible.builtin.hostname:
+    name: "{{ ct_hostname | default(inventory_hostname) }}"
+
+- name: Install locales and tzdata
+  ansible.builtin.apt:
+    name: [locales, tzdata]
+    state: present
+    update_cache: yes
+
+- name: Generate en_US.UTF-8 locale
+  ansible.builtin.command: locale-gen en_US.UTF-8
+  changed_when: false
+
+- name: Set system timezone
+  ansible.builtin.command: "timedatectl set-timezone {{ system_timezone }}"
+  changed_when: false
+
+- name: Update apt cache and upgrade all packages
+  ansible.builtin.apt:
+    update_cache: yes
+    upgrade: dist
+    autoremove: yes
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Disable swap immediately
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+  changed_when: false
+
+- name: Disable swap permanently in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Apply sysctl performance tuning
+  ansible.builtin.blockinfile:
+    path: /etc/sysctl.d/99-monitoring.conf
+    create: yes
+    block: |
+      fs.file-max = 2097152
+      net.core.somaxconn = 65535
+      net.ipv4.tcp_max_syn_backlog = 65535
+      vm.swappiness = 1
+      vm.dirty_ratio = 15
+      vm.dirty_background_ratio = 5
+  notify: Apply sysctl
+
+- name: Set system-wide file descriptor limits
+  ansible.builtin.blockinfile:
+    path: /etc/security/limits.d/99-monitoring.conf
+    create: yes
+    block: |
+      *    soft nofile 65536
+      *    hard nofile 131072
+      root soft nofile 65536
+      root hard nofile 131072
+
+# /etc/hosts entries — IPs read from inventory, never hardcoded
+- name: Add monitoring hosts to /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE MANAGED — monitoring stack"
+    block: |
+      {{ hostvars[groups['prometheus'][0]]['ansible_host'] }}  prometheus prometheus-vm
+      {{ hostvars[groups['grafana'][0]]['ansible_host'] }}     grafana grafana-vm
+      {{ hostvars[groups['zabbix'][0]]['ansible_host'] }}      zabbix zabbix-vm
+
+- name: Set UFW default policies
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - ufw default deny incoming
+    - ufw default allow outgoing
+  changed_when: false
+
+- name: Allow SSH through UFW
+  ansible.builtin.command: ufw allow 22/tcp
+  changed_when: false
+
+- name: Allow all traffic from internal network
+  ansible.builtin.command: "ufw allow from {{ internal_network }}"
+  changed_when: false
+
+- name: Enable UFW
+  ansible.builtin.command: ufw --force enable
+  changed_when: false

@@ -1,0 +1,89 @@
+---
+- name: Install node_exporter dependencies
+  ansible.builtin.apt:
+    name: [wget, tar]
+    state: present
+    update_cache: yes
+
+- name: Create node_exporter system group
+  ansible.builtin.group:
+    name: "{{ node_exporter_group }}"
+    system: true
+
+- name: Create node_exporter system user
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create node_exporter install directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_install_dir }}"
+    state: directory
+    owner: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_group }}"
+    mode: "0755"
+
+- name: Check if node_exporter binary exists
+  ansible.builtin.stat:
+    path: "{{ node_exporter_install_dir }}/node_exporter"
+  register: ne_bin
+
+- name: Download node_exporter tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    mode: "0644"
+    timeout: 120
+  when: not ne_bin.stat.exists
+
+- name: Extract node_exporter
+  ansible.builtin.unarchive:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    dest: /tmp/
+    remote_src: true
+  when: not ne_bin.stat.exists
+
+- name: Install node_exporter binary
+  ansible.builtin.copy:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+    dest: "{{ node_exporter_install_dir }}/node_exporter"
+    owner: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_group }}"
+    mode: "0755"
+    remote_src: true
+  when: not ne_bin.stat.exists
+  notify: Restart node_exporter
+
+- name: Create /usr/local/bin symlink
+  ansible.builtin.file:
+    src: "{{ node_exporter_install_dir }}/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    state: link
+
+- name: Clean up tarball
+  ansible.builtin.file:
+    path: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    state: absent
+
+- name: Deploy node_exporter systemd service
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart node_exporter
+
+- name: Enable and start node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow node_exporter port in UFW
+  ansible.builtin.command: "ufw allow from {{ internal_network }} to any port {{ node_exporter_port }} proto tcp"
+  changed_when: false

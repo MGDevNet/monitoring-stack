@@ -1,0 +1,150 @@
+---
+- name: Install Grafana system dependencies
+  ansible.builtin.apt:
+    name: [curl, gnupg2, apt-transport-https, ca-certificates, adduser, libfontconfig1, libfontconfig1-dev, musl]
+    state: present
+    update_cache: yes
+
+- name: Create /etc/apt/keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Download Grafana GPG key
+  ansible.builtin.shell: |
+    curl -fsSL https://apt.grafana.com/gpg.key | \
+    gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+  args:
+    creates: /etc/apt/keyrings/grafana.gpg
+
+- name: Add Grafana stable apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+    update_cache: yes
+
+- name: Install Grafana {{ grafana_version }}
+  ansible.builtin.apt:
+    name: "grafana={{ grafana_version }}"
+    state: present
+    update_cache: yes
+  notify: Restart grafana
+
+- name: Create Grafana directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ grafana_user }}"
+    group: "{{ grafana_group }}"
+    mode: "0755"
+  loop:
+    - "{{ grafana_data_dir }}"
+    - "{{ grafana_logs_dir }}"
+    - "{{ grafana_plugins_dir }}"
+    - "{{ grafana_dashboards_dir }}"
+    - /etc/grafana/provisioning/datasources
+    - /etc/grafana/provisioning/dashboards
+    - /etc/grafana/provisioning/alerting
+
+- name: Deploy grafana.ini
+  ansible.builtin.template:
+    src: grafana.ini.j2
+    dest: /etc/grafana/grafana.ini
+    owner: root
+    group: "{{ grafana_group }}"
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Provision datasources (Prometheus + Zabbix auto-wired)
+  ansible.builtin.template:
+    src: datasources.yml.j2
+    dest: /etc/grafana/provisioning/datasources/monitoring.yml
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Provision dashboard loader
+  ansible.builtin.template:
+    src: dashboards_provider.yml.j2
+    dest: /etc/grafana/provisioning/dashboards/default.yml
+    owner: grafana
+    group: grafana
+    mode: "0644"
+  notify: Restart grafana
+
+- name: Install Grafana plugins
+  ansible.builtin.command: >
+    grafana cli --pluginsDir {{ grafana_plugins_dir }} plugins install {{ item }}
+  loop: "{{ grafana_plugins }}"
+  register: plugin_result
+  changed_when: "'already installed' not in plugin_result.stdout"
+  failed_when:
+    - plugin_result.rc != 0
+    - "'already installed' not in plugin_result.stdout"
+  notify: Restart grafana
+
+- name: Enable and start Grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for Grafana HTTP port to open
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ grafana_port }}"
+    timeout: 120
+
+- name: Wait for Grafana API health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+    method: GET
+    status_code: 200
+  register: grafana_health
+  retries: 15
+  delay: 8
+  until: grafana_health.status == 200
+
+- name: Set Grafana admin password via API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/user/password"
+    method: PUT
+    user: "{{ grafana_admin_user }}"
+    password: "admin"
+    force_basic_auth: true
+    body_format: json
+    body:
+      oldPassword: "admin"
+      newPassword: "{{ grafana_admin_password }}"
+      confirmNew:  "{{ grafana_admin_password }}"
+    status_code: [200, 400]
+  register: grafana_pw
+  changed_when: grafana_pw.status == 200
+  no_log: true
+  ignore_errors: true
+
+- name: Check datasources are provisioned
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/datasources"
+    method: GET
+    user: "{{ grafana_admin_user }}"
+    password: "{{ grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: grafana_ds
+  retries: 5
+  delay: 5
+  until: grafana_ds.status == 200
+  no_log: true
+
+- name: Show provisioned datasources
+  ansible.builtin.debug:
+    msg: "Grafana ready — datasources: {{ grafana_ds.json | map(attribute='name') | list | join(', ') }}"
+
+- name: Allow Grafana port in UFW
+  ansible.builtin.command: "ufw allow {{ grafana_port }}/tcp"
+  changed_when: false

@@ -1,0 +1,152 @@
+---
+# =============================================================================
+#  playbooks/upgrade.yml — Safely upgrade all services
+#  Usage: ansible-playbook playbooks/upgrade.yml
+#         ansible-playbook playbooks/upgrade.yml --tags prometheus
+# =============================================================================
+
+- name: "Upgrade Node Exporter"
+  hosts: monitored
+  become: true
+  gather_facts: true
+  tags: [node_exporter, upgrade]
+  tasks:
+    - name: Check installed Node Exporter version
+      ansible.builtin.command: /usr/local/bin/node_exporter --version
+      register: ne_current
+      changed_when: false
+      failed_when: false
+
+    - name: Show current vs target
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} — current: {{ ne_current.stderr | regex_search('version ([0-9.]+)', '\\1') | first | default('not installed') }} | target: {{ node_exporter_version }}"
+
+    - name: Remove old binary to force re-download
+      ansible.builtin.file:
+        path: "{{ node_exporter_install_dir }}/node_exporter"
+        state: absent
+      when: node_exporter_version not in (ne_current.stderr | default(''))
+
+    - name: Upgrade Node Exporter
+      ansible.builtin.include_role:
+        name: node_exporter
+      when: node_exporter_version not in (ne_current.stderr | default(''))
+
+- name: "Upgrade Prometheus"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [prometheus, upgrade]
+  tasks:
+    - name: Check installed Prometheus version
+      ansible.builtin.command: /usr/local/bin/prometheus --version
+      register: prom_current
+      changed_when: false
+      failed_when: false
+
+    - name: Show current vs target
+      ansible.builtin.debug:
+        msg: "current: {{ prom_current.stderr | regex_search('version ([0-9.]+)', '\\1') | first | default('not installed') }} | target: {{ prometheus_version }}"
+
+    - name: Remove old binary to force re-download
+      ansible.builtin.file:
+        path: "{{ prometheus_install_dir }}/prometheus"
+        state: absent
+      when: prometheus_version not in (prom_current.stderr | default(''))
+
+    - name: Upgrade Prometheus
+      ansible.builtin.include_role:
+        name: prometheus
+      when: prometheus_version not in (prom_current.stderr | default(''))
+
+- name: "Upgrade Alertmanager"
+  hosts: prometheus
+  become: true
+  gather_facts: true
+  tags: [alertmanager, upgrade]
+  tasks:
+    - name: Check installed Alertmanager version
+      ansible.builtin.command: /usr/local/bin/alertmanager --version
+      register: am_current
+      changed_when: false
+      failed_when: false
+
+    - name: Show current vs target
+      ansible.builtin.debug:
+        msg: "current: {{ am_current.stderr | regex_search('version ([0-9.]+)', '\\1') | first | default('not installed') }} | target: {{ alertmanager_version }}"
+
+    - name: Remove old binary to force re-download
+      ansible.builtin.file:
+        path: "{{ alertmanager_install_dir }}/alertmanager"
+        state: absent
+      when: alertmanager_version not in (am_current.stderr | default(''))
+
+    - name: Upgrade Alertmanager
+      ansible.builtin.include_role:
+        name: alertmanager
+      when: alertmanager_version not in (am_current.stderr | default(''))
+
+- name: "Upgrade Grafana"
+  hosts: grafana
+  become: true
+  gather_facts: true
+  tags: [grafana, upgrade]
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Upgrade Grafana to target version
+      ansible.builtin.apt:
+        name: "grafana={{ grafana_version }}"
+        state: present
+      register: grafana_upgraded
+      notify: Restart grafana
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Grafana {{ 'upgraded' if grafana_upgraded.changed else 'already at target version' }} ({{ grafana_version }})"
+
+  handlers:
+    - name: Restart grafana
+      ansible.builtin.systemd:
+        name: grafana-server
+        state: restarted
+
+- name: "Upgrade Zabbix packages"
+  hosts: zabbix
+  become: true
+  gather_facts: true
+  tags: [zabbix, upgrade]
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Upgrade Zabbix server, frontend and agent2
+      ansible.builtin.apt:
+        name:
+          - zabbix-server-mysql
+          - zabbix-frontend-php
+          - zabbix-nginx-conf
+          - zabbix-agent2
+        state: latest
+      register: zabbix_upgraded
+      notify:
+        - Restart zabbix-server
+        - Restart zabbix-agent2
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Zabbix {{ 'upgraded' if zabbix_upgraded.changed else 'already up to date' }}"
+
+  handlers:
+    - name: Restart zabbix-server
+      ansible.builtin.systemd:
+        name: zabbix-server
+        state: restarted
+
+    - name: Restart zabbix-agent2
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted
