@@ -1,0 +1,11 @@
+# Ansible
+*.retry
+/tmp/
+.cache/
+
+# Ansible Vault password files
+.vault_pass
+*.vault
+
+# Fact cache
+/tmp/ansible_facts_cache/
